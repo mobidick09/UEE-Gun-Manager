@@ -1,0 +1,48 @@
+{
+  "name": "uees-gun-manager",
+  "productName": "UEE Gun Manager",
+  "version": "1.0.0",
+  "description": "UEE Gun Manager",
+  "main": "main.js",
+  "author": "Till",
+  "license": "ISC",
+
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder"
+  },
+
+  "devDependencies": {
+    "electron": "^42.4.0",
+    "electron-builder": "^26.0.12"
+  },
+
+  "dependencies": {
+    "electron-updater": "^6.8.9"
+  },
+
+  "build": {
+    "appId": "com.uee.gunmanager",
+
+    "directories": {
+      "output": "dist"
+    },
+
+    "files": [
+      "**/*"
+    ],
+
+    "win": {
+      "target": "nsis",
+      "icon": "icon.ico"
+    },
+
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "mobidick09",
+        "repo": "UEE-Gun-Manager"
+      }
+    ]
+  }
+}
