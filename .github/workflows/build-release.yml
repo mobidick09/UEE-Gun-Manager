@@ -1,0 +1,45 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*.*.*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Determine build version
+        id: ver
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+            RELEASE_TYPE="release"
+          else
+            BASE=$(node -p "require('./package.json').version")
+            TS=$(date -u +%Y%m%d%H%M%S)
+            VERSION="${BASE}-alpha-${TS}"
+            RELEASE_TYPE="prerelease"
+          fi
+          echo "Building version: $VERSION ($RELEASE_TYPE)"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "release_type=$RELEASE_TYPE" >> "$GITHUB_OUTPUT"
+
+      - name: Build and publish
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_GH_TOKEN }}
+        run: npx electron-builder --publish always -c.extraMetadata.version=${{ steps.ver.outputs.version }} -c.publish.releaseType=${{ steps.ver.outputs.release_type }}
