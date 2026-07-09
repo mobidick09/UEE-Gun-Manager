@@ -39,13 +39,27 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "release_type=$RELEASE_TYPE" >> "$GITHUB_OUTPUT"
 
-      - name: Set version and release type
+      - name: Set version
         shell: bash
-        run: |
-          npm pkg set version="${{ steps.ver.outputs.version }}"
-          npm pkg set build.publish[0].releaseType="${{ steps.ver.outputs.release_type }}"
+        run: npm pkg set version="${{ steps.ver.outputs.version }}"
 
-      - name: Build and publish
+      - name: Build and publish release (tag builds only)
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.RELEASE_GH_TOKEN }}
-        run: npx electron-builder --publish always
+        run: |
+          npm pkg set build.publish[0].releaseType="${{ steps.ver.outputs.release_type }}"
+          npx electron-builder --publish always
+
+      - name: Build only (alpha builds)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        run: npx electron-builder
+
+      - name: Upload alpha build artifact
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: UEE-Gun-Manager-${{ steps.ver.outputs.version }}
+          path: dist/*.exe
+          retention-days: 30
