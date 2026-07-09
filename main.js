@@ -1,5 +1,6 @@
 const { app, BrowserWindow } = require('electron');
 const path = require('path');
+const { checkForUpdates } = require('./updater');
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -12,4 +13,7 @@ function createWindow() {
   win.loadFile('UEE_Gun_Manager.html');
 }
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  createWindow();
+  checkForUpdates();
+});
