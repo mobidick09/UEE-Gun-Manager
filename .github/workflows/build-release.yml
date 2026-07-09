@@ -39,7 +39,13 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "release_type=$RELEASE_TYPE" >> "$GITHUB_OUTPUT"
 
+      - name: Set version and release type
+        shell: bash
+        run: |
+          npm pkg set version="${{ steps.ver.outputs.version }}"
+          npm pkg set build.publish[0].releaseType="${{ steps.ver.outputs.release_type }}"
+
       - name: Build and publish
         env:
           GH_TOKEN: ${{ secrets.RELEASE_GH_TOKEN }}
-        run: npx electron-builder --publish always -c.extraMetadata.version=${{ steps.ver.outputs.version }} -c.publish.releaseType=${{ steps.ver.outputs.release_type }}
+        run: npx electron-builder --publish always
