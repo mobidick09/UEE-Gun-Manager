@@ -676,7 +676,7 @@ function taoSubscribeShip(id){
   if(taoShipUnsubs[id])return; // already subscribed
   const entry=fleet.find(f=>f.id===id);
   if(!entry)return;
-  taoShipData[id]={label:entry.label,preset:entry.preset,turrets:[],kills:0,assignments:{}};
+  taoShipData[id]={label:entry.label,preset:entry.preset,turrets:[],kills:0,assignments:{},defaultAmmo:5000};
   const unsubs=[];
   // Main ship data
   unsubs.push(onValue(ref(db,`ships/${id}`),snap=>{
@@ -684,6 +684,7 @@ function taoSubscribeShip(id){
     if(!taoShipData[id])return;
     taoShipData[id].kills=d.kills??0;
     taoShipData[id].assignments=d.assignments||{};
+    taoShipData[id].defaultAmmo=d.defaultAmmo??5000;
     const cfg=SHIPS[entry.preset];
     const rawT=d.turrets;
     if(rawT){
@@ -695,13 +696,15 @@ function taoSubscribeShip(id){
         status:r?.status??"Offline",
         weaponType:r?.weaponType??"Ballistic",
         ammo:Array.isArray(r?.ammo)?r.ammo:Array.from({length:cfg.weapons?.[i]??1},()=>5000),
-        notes:r?.notes??""
+        notes:r?.notes??"",
+        excluded:r?.excluded??false
       }));
     } else {
       taoShipData[id].turrets=cfg.turrets.map((p,i)=>({
         id:`T-${String(i+1).padStart(2,"0")}`,position:p,
         gunner:"",status:"Offline",weaponType:"Ballistic",
-        ammo:Array.from({length:cfg.weapons?.[i]??1},()=>5000),notes:""
+        ammo:Array.from({length:cfg.weapons?.[i]??1},()=>5000),notes:"",
+        excluded:false
       }));
     }
     if(taoMode)renderTAO();
@@ -751,10 +754,11 @@ function taoSelectShip(id){
     const wc=t.ammo?t.ammo.length:1;
     const ammoAvg=(!isLaser&&wc)?Math.round(ammoTotal/wc):null;
     const scls=t.status==="Online"?"online":t.status==="AFK"?"afk":t.status==="Destroyed"?"destroyed":"offline";
-    return `<tr>
+    return `<tr${t.excluded?' style="opacity:0.4"':""}>
       <td><span class="${scls}">●</span> ${t.id}</td>
       <td style="color:#336633;font-size:9px">${t.gunner||aName}</td>
       <td style="text-align:right;color:${isLaser?"#00ccff":"#00ff66"}">${isLaser?"LASER":ammoAvg!==null?ammoAvg.toLocaleString():"—"}</td>
+      <td style="text-align:center"><input type="checkbox" ${t.excluded?"checked":""} title="Von Ammo-Reset ausschließen" onchange="taoToggleExclude('${id}',${i},this.checked)"></td>
     </tr>`;
   }).join("");
   oc.innerHTML=`
@@ -767,8 +771,12 @@ function taoSelectShip(id){
       <div><div style="font-size:9px;color:#336633;letter-spacing:1px">ONLINE</div><div style="font-weight:bold">${onlineT}/${sd.turrets.length}</div></div>
       <div><div style="font-size:9px;color:#336633;letter-spacing:1px">TURRETS</div><div style="font-weight:bold">${cfg.turrets.length}</div></div>
     </div>
+    <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
+      <label style="font-size:9px;color:#336633;letter-spacing:1px">STANDARD AMMO</label>
+      <input type="number" min="0" value="${sd.defaultAmmo??5000}" style="width:80px;text-align:center" onchange="taoSetDefaultAmmo('${id}',this.value)">
+    </div>
     <table class="tao-table" style="font-size:10px">
-      <thead><tr><th>TURRET</th><th>GUNNER</th><th style="text-align:right">AVG AMMO</th></tr></thead>
+      <thead><tr><th>TURRET</th><th>GUNNER</th><th style="text-align:right">AVG AMMO</th><th>EXCL</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
   ov.style.display="block";
@@ -857,6 +865,17 @@ function taoAssign(turretIdx,userId,shipId){
   update(ref(db,`ships/${sid}`),updates)
     .catch(()=>{syncEl.textContent="✗ SYNC ERROR";syncEl.className="sync-err";});
 }
+function taoSetDefaultAmmo(shipId,val){
+  const v=Math.max(0,Number(val)||0);
+  if(taoShipData[shipId])taoShipData[shipId].defaultAmmo=v;
+  update(ref(db,`ships/${shipId}`),{defaultAmmo:v})
+    .catch(()=>{syncEl.textContent="✗ SYNC ERROR";syncEl.className="sync-err";});
+}
+function taoToggleExclude(shipId,turretIdx,excluded){
+  if(taoShipData[shipId]?.turrets?.[turretIdx])taoShipData[shipId].turrets[turretIdx].excluded=excluded;
+  update(ref(db,`ships/${shipId}/turrets/${turretIdx}`),{excluded})
+    .catch(()=>{syncEl.textContent="✗ SYNC ERROR";syncEl.className="sync-err";});
+}
 function taoRequestAmmo(){
   update(ref(db,`ships/${currentShipId}`),{ammoRequest:Date.now()})
     .then(()=>{
@@ -918,15 +937,20 @@ function taoReset(type){
       }
     }
     if(type==="ammo"||type==="all"){
+      const defAmmo=taoShipData[entry.id]?.defaultAmmo??5000;
+      const shipTurrets=taoShipData[entry.id]?.turrets;
       for(let i=0;i<numTurrets;i++){
+        if(shipTurrets?.[i]?.excluded)continue;
         const wc=cfg.weapons?.[i]??1;
-        updates[`turrets/${i}/ammo`]=Array.from({length:wc},()=>5000);
+        updates[`turrets/${i}/ammo`]=Array.from({length:wc},()=>defAmmo);
       }
     }
     update(ref(db,`ships/${entry.id}`),updates).catch(e=>console.error("Reset failed:",entry.id,e));
   });
 }
 window.taoRequestAmmo=taoRequestAmmo;
+window.taoSetDefaultAmmo=taoSetDefaultAmmo;
+window.taoToggleExclude=taoToggleExclude;
 window.toggleTaoResetMenu=toggleTaoResetMenu;
 window.taoReset=taoReset;
 
@@ -977,7 +1001,7 @@ const _f=fleet[0];loadShip(_f.id,_f.preset,_f.label);
       <button id="taoResetBtn" onclick="toggleTaoResetMenu()">⚠ RESET</button>
       <div id="taoResetMenu">
         <button onclick="taoReset('crew')">CREW — clear all gunner assignments</button>
-        <button onclick="taoReset('ammo')">AMMO — reset all ammo to 5000</button>
+        <button onclick="taoReset('ammo')">AMMO — reset all ammo to each ship's standard count</button>
         <button onclick="taoReset('all')">ALL — clear crew &amp; reset ammo</button>
       </div>
     </div>
