@@ -120,6 +120,19 @@ h3{font-size:11px;letter-spacing:2px;color:#00aa44;margin-bottom:8px}
 .wtype-btn:hover{border-color:#00aa44;color:var(--g)}
 .wtype-btn.wt-active-ballistic{border-color:var(--g);color:var(--g);box-shadow:0 0 6px rgba(0,255,102,0.25)}
 .wtype-btn.wt-active-laser{border-color:#00ccff;color:#00ccff;box-shadow:0 0 6px rgba(0,204,255,0.25)}
+
+/* In-app modal (replaces native prompt()/confirm()) */
+.app-modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:2000;align-items:center;justify-content:center}
+.app-modal-overlay.open{display:flex}
+.app-modal{background:#0a140a;border:1px solid var(--g);border-radius:5px;padding:18px 20px;min-width:300px;max-width:90vw;box-shadow:0 0 20px rgba(0,255,102,0.25)}
+.app-modal-title{font-size:13px;letter-spacing:2px;color:var(--g);font-weight:bold;margin-bottom:10px}
+.app-modal-message{font-size:11px;color:#66aa66;margin-bottom:12px;white-space:pre-line;line-height:1.5}
+.app-modal input{margin-bottom:14px}
+.app-modal-actions{display:flex;gap:8px;justify-content:flex-end}
+.app-modal-btn{background:#060d06;border:1px solid #1a4a1a;color:var(--g);padding:7px 16px;font-family:Consolas,monospace;font-size:11px;letter-spacing:1px;cursor:pointer;border-radius:3px}
+.app-modal-btn:hover{border-color:var(--g)}
+.app-modal-btn-cancel{color:#aa6666;border-color:#4a1a1a}
+.app-modal-btn-cancel:hover{border-color:#ff4444;color:#ff4444}
 </style>
 <link rel="stylesheet" href="assets/css/svg-turrets.css">
 </head>
@@ -185,6 +198,19 @@ h3{font-size:11px;letter-spacing:2px;color:#00aa44;margin-bottom:8px}
 </div>
 <div id="tooltip"></div>
 
+<!-- In-app modal (replaces native prompt()/confirm()) -->
+<div id="appModalOverlay" class="app-modal-overlay">
+  <div class="app-modal">
+    <div id="appModalTitle" class="app-modal-title"></div>
+    <div id="appModalMessage" class="app-modal-message"></div>
+    <input id="appModalInput" type="text" style="display:none">
+    <div class="app-modal-actions">
+      <button id="appModalCancel" class="app-modal-btn app-modal-btn-cancel">CANCEL</button>
+      <button id="appModalOk" class="app-modal-btn app-modal-btn-ok">OK</button>
+    </div>
+  </div>
+</div>
+
 <script type="module">
 import{initializeApp}from"https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import{getDatabase,ref,set,update,onValue,onDisconnect,remove}from"https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
@@ -241,10 +267,47 @@ let lowAmmoThreshold=1000;
 let taoMode=false,onlineUsers={},assignments={},_presenceRef=null;
 let taoShips=[],taoShipData={},taoShipUnsubs={},taoSelectedShip=null;
 let _fbSubUnsub=null,_fbSubTAOUnsubs=[];
+// Discord login/verification is not implemented yet — disabled for now.
+// setupPresence()/applyAccessControl() stay inert until this is turned back on.
+const DISCORD_VERIFICATION_ENABLED=false;
 
 const $=id=>document.getElementById(id);
 const gunnerF=$("gunner"),statusF=$("status"),killsF=$("kills"),notesF=$("notes");
 const syncEl=$("syncStatus"),tooltip=$("tooltip"),ctxMenu=$("ctxMenu"),lockF=$("lockPositions");
+
+// ═══════════════════════════════════════════════════════════════════
+// IN-APP MODAL (replaces native prompt()/confirm())
+// ═══════════════════════════════════════════════════════════════════
+let _modalResolve=null;
+const modalOverlay=$("appModalOverlay"),modalTitle=$("appModalTitle"),modalMessage=$("appModalMessage"),modalInput=$("appModalInput"),modalOk=$("appModalOk"),modalCancel=$("appModalCancel");
+function _closeModal(result){
+  modalOverlay.classList.remove("open");
+  const resolve=_modalResolve;_modalResolve=null;
+  if(resolve)resolve(result);
+}
+function showConfirmModal(message,onConfirm,title="CONFIRM"){
+  modalTitle.textContent=title;
+  modalMessage.textContent=message;
+  modalInput.style.display="none";modalInput.value="";
+  modalOverlay.classList.add("open");
+  _modalResolve=ok=>{if(ok)onConfirm();};
+  setTimeout(()=>modalOk.focus(),0);
+}
+function showPromptModal(message,defaultValue,onSubmit,title="INPUT"){
+  modalTitle.textContent=title;
+  modalMessage.textContent=message;
+  modalInput.style.display="block";modalInput.value=defaultValue??"";
+  modalOverlay.classList.add("open");
+  _modalResolve=ok=>{if(ok)onSubmit(modalInput.value);};
+  setTimeout(()=>{modalInput.focus();modalInput.select();},0);
+}
+modalOk.addEventListener("click",()=>_closeModal(true));
+modalCancel.addEventListener("click",()=>_closeModal(false));
+modalOverlay.addEventListener("click",e=>{if(e.target===modalOverlay)_closeModal(false);});
+modalInput.addEventListener("keydown",e=>{
+  if(e.key==="Enter"){e.preventDefault();_closeModal(true);}
+  if(e.key==="Escape"){e.preventDefault();_closeModal(false);}
+});
 
 // ═══════════════════════════════════════════════════════════════════
 // FIREBASE
@@ -274,24 +337,26 @@ function addFleetShip(preset){
 function removeFleetShip(id){
   if(BASE_PRESETS.includes(fleet.find(f=>f.id===id)?.label))return;
   const entry=fleet.find(f=>f.id===id);
-  if(!confirm(`Remove "${entry?.label}" from the fleet?\nThis only removes it from your view — Firebase data is kept.`))return;
-  remove(ref(db,`ships/${id}`)).catch(()=>{});
-  fleet=fleet.filter(f=>f.id!==id);
-  saveFleet();
-  buildCards();
-  if(currentShipId===id){const f=fleet[0];loadShip(f.id,f.preset,f.label);}
+  showConfirmModal(`Remove "${entry?.label}" from the fleet?\nThis only removes it from your view — Firebase data is kept.`,()=>{
+    remove(ref(db,`ships/${id}`)).catch(()=>{});
+    fleet=fleet.filter(f=>f.id!==id);
+    saveFleet();
+    buildCards();
+    if(currentShipId===id){const f=fleet[0];loadShip(f.id,f.preset,f.label);}
+  },"REMOVE SHIP");
 }
 function renameFleetShip(id){
   const entry=fleet.find(f=>f.id===id);if(!entry)return;
-  const newName=prompt("Rename ship:",entry.label);
-  if(!newName||!newName.trim()||newName.trim()===entry.label)return;
-  entry.label=newName.trim();
-  if(currentShipId===id)currentShipLabel=entry.label;
-  if(taoShipData[id])taoShipData[id].label=entry.label;
-  saveFleet();
-  buildCards();
-  render();
-  if(taoMode)renderTAO();
+  showPromptModal("Rename ship:",entry.label,newName=>{
+    if(!newName||!newName.trim()||newName.trim()===entry.label)return;
+    entry.label=newName.trim();
+    if(currentShipId===id)currentShipLabel=entry.label;
+    if(taoShipData[id])taoShipData[id].label=entry.label;
+    saveFleet();
+    buildCards();
+    render();
+    if(taoMode)renderTAO();
+  },"RENAME SHIP");
 }
 function toggleAddShipMenu(){
   const m=$("addShipMenu");
@@ -612,7 +677,7 @@ function updateSummary(){
 
 // ── TAO: PRESENCE ────────────────────────────────────────────────────────────
 function setupPresence(ship){
-  if(!window.discordUser)return;
+  if(!DISCORD_VERIFICATION_ENABLED||!window.discordUser)return;
   if(_presenceRef){try{set(_presenceRef,null);}catch(e){}}
   const uid=window.discordUser.id;
   _presenceRef=ref(db,`ships/${ship}/online/${uid}`);
@@ -644,7 +709,7 @@ function fbSubTAO(ship){
 
 // ── TAO: ACCESS CONTROL FOR REGULAR GUNNERS ──────────────────────────────────
 function applyAccessControl(){
-  if(!window.discordUser||taoMode)return;
+  if(!DISCORD_VERIFICATION_ENABLED||!window.discordUser||taoMode)return;
   const myId=window.discordUser.id;
   const entry=Object.entries(assignments).find(([,uid])=>uid===myId);
   if(!entry)return; // not assigned — full access
@@ -924,29 +989,30 @@ function toggleTaoResetMenu(){
 function taoReset(type){
   $("taoResetMenu").style.display="none";
   const labels={crew:"crew assignments",ammo:"ammo counts",all:"crew & ammo"};
-  if(!confirm(`Reset ${labels[type]} for ALL ships in fleet?\nThis cannot be undone.`))return;
-  fleet.forEach(entry=>{
-    const cfg=SHIPS[entry.preset];
-    if(!cfg)return;
-    const numTurrets=cfg.turrets.length;
-    const updates={};
-    if(type==="crew"||type==="all"){
-      updates["assignments"]=null;
-      for(let i=0;i<numTurrets;i++){
-        updates[`turrets/${i}/gunner`]="";
+  showConfirmModal(`Reset ${labels[type]} for ALL ships in fleet?\nThis cannot be undone.`,()=>{
+    fleet.forEach(entry=>{
+      const cfg=SHIPS[entry.preset];
+      if(!cfg)return;
+      const numTurrets=cfg.turrets.length;
+      const updates={};
+      if(type==="crew"||type==="all"){
+        updates["assignments"]=null;
+        for(let i=0;i<numTurrets;i++){
+          updates[`turrets/${i}/gunner`]="";
+        }
       }
-    }
-    if(type==="ammo"||type==="all"){
-      const defAmmo=taoShipData[entry.id]?.defaultAmmo??5000;
-      const shipTurrets=taoShipData[entry.id]?.turrets;
-      for(let i=0;i<numTurrets;i++){
-        if(shipTurrets?.[i]?.excluded)continue;
-        const wc=cfg.weapons?.[i]??1;
-        updates[`turrets/${i}/ammo`]=Array.from({length:wc},()=>defAmmo);
+      if(type==="ammo"||type==="all"){
+        const defAmmo=taoShipData[entry.id]?.defaultAmmo??5000;
+        const shipTurrets=taoShipData[entry.id]?.turrets;
+        for(let i=0;i<numTurrets;i++){
+          if(shipTurrets?.[i]?.excluded)continue;
+          const wc=cfg.weapons?.[i]??1;
+          updates[`turrets/${i}/ammo`]=Array.from({length:wc},()=>defAmmo);
+        }
       }
-    }
-    update(ref(db,`ships/${entry.id}`),updates).catch(e=>console.error("Reset failed:",entry.id,e));
-  });
+      update(ref(db,`ships/${entry.id}`),updates).catch(e=>console.error("Reset failed:",entry.id,e));
+    });
+  },"RESET");
 }
 window.taoRequestAmmo=taoRequestAmmo;
 window.taoSetDefaultAmmo=taoSetDefaultAmmo;
