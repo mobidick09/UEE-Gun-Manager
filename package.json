@@ -1,7 +1,7 @@
 {
   "name": "uees-gun-manager",
   "productName": "UEE Gun Manager",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "UEE Gun Manager",
   "main": "main.js",
   "author": "Till",
